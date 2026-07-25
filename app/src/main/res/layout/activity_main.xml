@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="HFP Music Router" android:textSize="26sp" android:textStyle="bold" />
+    <TextView android:id="@+id/statusText" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="Connect the phone to the Audi hands-free Bluetooth first." android:textSize="16sp" />
+    <Button android:id="@+id/routeButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="Start HFP routing" />
+    <Button android:id="@+id/pickButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Choose audio file" />
+    <Button android:id="@+id/playPauseButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:enabled="false" android:text="Play" />
+    <Button android:id="@+id/stopButton" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Stop routing" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="Audio is mono and phone-call quality. Some phones or car systems may reject non-call SCO/HFP audio. This app plays files selected inside the app; it does not capture Spotify or YouTube." android:textSize="14sp" />
+</LinearLayout>
