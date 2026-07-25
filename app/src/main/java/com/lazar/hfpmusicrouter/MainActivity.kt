@@ -1,11 +1,10 @@
 package com.lazar.hfpmusicrouter
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.net.Uri
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,14 +14,21 @@ import com.lazar.hfpmusicrouter.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private var mediaPlayer: MediaPlayer? = null
-    private var selectedUri: Uri? = null
+    private lateinit var projectionManager: MediaProjectionManager
 
-    private val audioPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            selectedUri = uri
-            preparePlayer(uri)
+    private val capturePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val serviceIntent = Intent(this, HfpRoutingService::class.java).apply {
+                action = HfpRoutingService.ACTION_START_CAPTURE
+                putExtra(HfpRoutingService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(HfpRoutingService.EXTRA_RESULT_DATA, result.data)
+            }
+            ContextCompat.startForegroundService(this, serviceIntent)
+            binding.statusText.text = "Routing device audio to the Bluetooth hands-free connection. Start audio in YouTube or any eligible player."
+        } else {
+            binding.statusText.text = "Audio capture permission was cancelled."
         }
     }
 
@@ -30,10 +36,8 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val denied = permissions.filterValues { !it }.keys
-        binding.statusText.text = if (denied.isEmpty()) {
-            "Permissions granted. Connect to the Audi and start routing."
-        } else {
-            "Bluetooth/notification permission was denied. Routing may not work."
+        if (denied.isNotEmpty()) {
+            binding.statusText.text = "Bluetooth or notification permission was denied. Routing may not work."
         }
     }
 
@@ -41,64 +45,19 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        projectionManager = getSystemService(MediaProjectionManager::class.java)
 
         requestNeededPermissions()
 
         binding.routeButton.setOnClickListener {
-            val intent = Intent(this, HfpRoutingService::class.java).apply {
-                action = HfpRoutingService.ACTION_START
-            }
-            ContextCompat.startForegroundService(this, intent)
-            binding.statusText.text = "Routing requested. Wait a few seconds, then press Play."
-        }
-
-        binding.pickButton.setOnClickListener {
-            audioPicker.launch(arrayOf("audio/*"))
-        }
-
-        binding.playPauseButton.setOnClickListener {
-            val player = mediaPlayer ?: return@setOnClickListener
-            if (player.isPlaying) {
-                player.pause()
-                binding.playPauseButton.text = "Play"
-            } else {
-                player.start()
-                binding.playPauseButton.text = "Pause"
-            }
+            capturePermissionLauncher.launch(projectionManager.createScreenCaptureIntent())
         }
 
         binding.stopButton.setOnClickListener {
-            mediaPlayer?.pause()
-            binding.playPauseButton.text = "Play"
             startService(Intent(this, HfpRoutingService::class.java).apply {
                 action = HfpRoutingService.ACTION_STOP
             })
             binding.statusText.text = "Routing stopped."
-        }
-    }
-
-    private fun preparePlayer(uri: Uri) {
-        mediaPlayer?.release()
-        mediaPlayer = MediaPlayer().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-            )
-            setDataSource(this@MainActivity, uri)
-            setOnPreparedListener {
-                binding.playPauseButton.isEnabled = true
-                binding.statusText.text = "Audio loaded. Start HFP routing, then press Play."
-            }
-            setOnCompletionListener {
-                binding.playPauseButton.text = "Play"
-            }
-            setOnErrorListener { _, what, extra ->
-                binding.statusText.text = "Playback error: $what / $extra"
-                true
-            }
-            prepareAsync()
         }
     }
 
@@ -115,11 +74,5 @@ class MainActivity : AppCompatActivity() {
             permissions += Manifest.permission.POST_NOTIFICATIONS
         }
         if (permissions.isNotEmpty()) permissionLauncher.launch(permissions.toTypedArray())
-    }
-
-    override fun onDestroy() {
-        mediaPlayer?.release()
-        mediaPlayer = null
-        super.onDestroy()
     }
 }
