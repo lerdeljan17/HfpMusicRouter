@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build and release Android APK
 
 on:
   workflow_dispatch:
@@ -6,10 +6,10 @@ on:
     branches: [ main ]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  build-release:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -35,9 +35,23 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Prepare release APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk HfpMusicRouter.apk
+
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: HfpMusicRouter-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: HfpMusicRouter.apk
           if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: v1.0.${{ github.run_number }}
+        run: |
+          gh release create "$TAG_NAME" HfpMusicRouter.apk \
+            --target "$GITHUB_SHA" \
+            --title "HFP Music Router $TAG_NAME" \
+            --notes "Automatic APK build. Captures eligible Android playback audio and routes it through Bluetooth HFP/SCO. Audio quality is limited to the hands-free profile." \
+            --latest
