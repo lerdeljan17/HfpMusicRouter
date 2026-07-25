@@ -50,6 +50,10 @@ class MainActivity : AppCompatActivity() {
         requestNeededPermissions()
 
         binding.routeButton.setOnClickListener {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                binding.statusText.text = "Capturing audio from other apps requires Android 10 or newer."
+                return@setOnClickListener
+            }
             capturePermissionLauncher.launch(projectionManager.createScreenCaptureIntent())
         }
 
