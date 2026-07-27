@@ -12,7 +12,6 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
-import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -29,6 +28,7 @@ class HfpRoutingService : Service() {
     private var audioTrack: AudioTrack? = null
     private var worker: Thread? = null
     private val running = AtomicBoolean(false)
+    private var changedLegacyAudioMode = false
 
     override fun onCreate() {
         super.onCreate()
@@ -50,7 +50,8 @@ class HfpRoutingService : Service() {
     private fun startCapture(intent: Intent) {
         if (running.get()) return
         startForegroundNotification()
-        startHfpRouting()
+
+        val hfpDevice = startHfpRouting()
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -116,6 +117,13 @@ class HfpRoutingService : Service() {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
+        // Route only this replay track to SCO. Do not globally move ordinary media
+        // playback into communication mode on modern Android, as some Samsung devices
+        // then send both the original media and this captured copy to the car.
+        if (hfpDevice != null) {
+            audioTrack?.setPreferredDevice(hfpDevice)
+        }
+
         running.set(true)
         audioRecord?.startRecording()
         audioTrack?.play()
@@ -129,17 +137,30 @@ class HfpRoutingService : Service() {
         }
     }
 
-    private fun startHfpRouting() {
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            audioManager.availableCommunicationDevices
-                .firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
-                ?.let { audioManager.setCommunicationDevice(it) }
+    private fun startHfpRouting(): AudioDeviceInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hfpDevice = audioManager.availableCommunicationDevices.firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
+
+            // setCommunicationDevice selects the communication route. We intentionally
+            // leave AudioManager.mode unchanged so USAGE_MEDIA from YouTube/local players
+            // is not also forced onto SCO by vendor audio policies.
+            if (hfpDevice != null) {
+                audioManager.setCommunicationDevice(hfpDevice)
+            }
+            hfpDevice
         } else {
+            changedLegacyAudioMode = true
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
             @Suppress("DEPRECATION")
             audioManager.startBluetoothSco()
             @Suppress("DEPRECATION")
             audioManager.isBluetoothScoOn = true
+
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
         }
     }
 
@@ -163,15 +184,18 @@ class HfpRoutingService : Service() {
             audioManager.isBluetoothScoOn = false
             @Suppress("DEPRECATION")
             audioManager.stopBluetoothSco()
+            if (changedLegacyAudioMode) {
+                audioManager.mode = AudioManager.MODE_NORMAL
+                changedLegacyAudioMode = false
+            }
         }
-        audioManager.mode = AudioManager.MODE_NORMAL
     }
 
     private fun startForegroundNotification() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("HFP Music Router")
-            .setContentText("Capturing eligible device audio and routing it over hands-free Bluetooth")
+            .setContentText("Routing one captured audio stream over hands-free Bluetooth")
             .setOngoing(true)
             .build()
 
