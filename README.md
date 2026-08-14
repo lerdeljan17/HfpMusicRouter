@@ -18,9 +18,9 @@ The APK is built and published automatically by GitHub Actions after every updat
 
 ## Galaxy S25 compatibility
 
-Version 1.2 adds a dedicated anti-echo routing path for the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra). On these models the app avoids `setCommunicationDevice()` and opens SCO using the legacy off-call SCO API while pinning only HFP Music Router's replay `AudioTrack` to the Bluetooth SCO endpoint. This is intended to prevent Samsung's audio policy from also routing the source app's original media stream to the car, which can otherwise produce two delayed copies of the same audio.
+Version 1.3 adds a stronger single-stream workaround for the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra). Some S25 firmware versions mirror the source app's normal `STREAM_MUSIC` audio into SCO while HFP Music Router is also replaying the captured audio, causing two delayed copies in the car.
 
-Galaxy S22 and other devices continue to use the normal modern Android communication-device path.
+While HFP routing is active on an S25, the app therefore temporarily mutes only the normal `STREAM_MUSIC` output and keeps its captured replay on `USAGE_VOICE_COMMUNICATION`. When routing stops, the app restores the previous music-stream mute state. Galaxy S22 and other devices continue to use the normal routing path.
 
 ## Important limitations
 
