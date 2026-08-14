@@ -18,9 +18,11 @@ The APK is built and published automatically by GitHub Actions after every updat
 
 ## Galaxy S25 compatibility
 
-Version 1.4 changes the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra) to a direct SCO-only mode.
+Version 1.5 keeps the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra) on a direct HFP path with no MediaProjection capture and no replay of the source audio.
 
-Testing showed that on the S25, opening SCO already causes Samsung's audio policy to send the source app's original media stream to the car. The earlier capture-and-replay path therefore produced a second delayed copy. Version 1.4 does not create MediaProjection, AudioRecord or AudioTrack replay on S25 devices; it only opens the SCO/HFP connection and lets the phone route the original media stream directly.
+Testing showed two Samsung-specific behaviors: the S25 already sends ordinary media into the HFP/SCO route, so replaying captured audio causes an echo; and a bare off-call SCO connection can be closed by the phone after roughly 10–20 seconds when there is no active communication stream.
+
+To address both issues, v1.5 uses Android's modern `setCommunicationDevice()` routing API and keeps a silent `USAGE_VOICE_COMMUNICATION` AudioTrack active. The silent track contains no copy of the music; its only purpose is to keep the communication/HFP session alive. The original YouTube/local-player stream is therefore the only audible music stream on S25.
 
 Galaxy S22 and other devices continue to use the playback-capture and replay path because those devices do not automatically mirror normal media into SCO.
 
