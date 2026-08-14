@@ -28,7 +28,10 @@ class HfpRoutingService : Service() {
     private var audioTrack: AudioTrack? = null
     private var worker: Thread? = null
     private val running = AtomicBoolean(false)
+
     private var changedLegacyAudioMode = false
+    private var usedCommunicationDeviceRoute = false
+    private var usedLegacyScoRoute = false
 
     override fun onCreate() {
         super.onCreate()
@@ -117,9 +120,10 @@ class HfpRoutingService : Service() {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
 
-        // Route only this replay track to SCO. Do not globally move ordinary media
-        // playback into communication mode on modern Android, as some Samsung devices
-        // then send both the original media and this captured copy to the car.
+        // Route only our replay track to the HFP/SCO endpoint.
+        // On Galaxy S25 devices we deliberately avoid setCommunicationDevice(), because
+        // Samsung's audio policy can also move the source app's original media stream to
+        // SCO, resulting in two delayed copies from the car speakers.
         if (hfpDevice != null) {
             audioTrack?.setPreferredDevice(hfpDevice)
         }
@@ -138,30 +142,50 @@ class HfpRoutingService : Service() {
     }
 
     private fun startHfpRouting(): AudioDeviceInfo? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        usedCommunicationDeviceRoute = false
+        usedLegacyScoRoute = false
+        changedLegacyAudioMode = false
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val hfpDevice = audioManager.availableCommunicationDevices.firstOrNull {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            }
-
-            // setCommunicationDevice selects the communication route. We intentionally
-            // leave AudioManager.mode unchanged so USAGE_MEDIA from YouTube/local players
-            // is not also forced onto SCO by vendor audio policies.
-            if (hfpDevice != null) {
-                audioManager.setCommunicationDevice(hfpDevice)
-            }
-            hfpDevice
-        } else {
-            changedLegacyAudioMode = true
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            @Suppress("DEPRECATION")
-            audioManager.startBluetoothSco()
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothScoOn = true
-
-            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+            } ?: audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
             }
+
+            if (isGalaxyS25Family()) {
+                // S25 compatibility path: open SCO without changing the system-wide
+                // communication route. The AudioTrack itself is pinned to hfpDevice.
+                @Suppress("DEPRECATION")
+                audioManager.startBluetoothSco()
+                usedLegacyScoRoute = true
+                return hfpDevice
+            }
+
+            if (hfpDevice != null) {
+                usedCommunicationDeviceRoute = audioManager.setCommunicationDevice(hfpDevice)
+            }
+            return hfpDevice
         }
+
+        changedLegacyAudioMode = true
+        usedLegacyScoRoute = true
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        @Suppress("DEPRECATION")
+        audioManager.startBluetoothSco()
+
+        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        }
+    }
+
+    private fun isGalaxyS25Family(): Boolean {
+        if (!Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return false
+        val model = Build.MODEL.uppercase()
+        return model.startsWith("SM-S931") || // Galaxy S25
+            model.startsWith("SM-S936") ||   // Galaxy S25+
+            model.startsWith("SM-S937") ||   // Galaxy S25 Edge
+            model.startsWith("SM-S938")      // Galaxy S25 Ultra
     }
 
     private fun stopCapture() {
@@ -177,25 +201,35 @@ class HfpRoutingService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (usedCommunicationDeviceRoute && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.clearCommunicationDevice()
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.isBluetoothScoOn = false
+        }
+
+        if (usedLegacyScoRoute) {
             @Suppress("DEPRECATION")
             audioManager.stopBluetoothSco()
-            if (changedLegacyAudioMode) {
-                audioManager.mode = AudioManager.MODE_NORMAL
-                changedLegacyAudioMode = false
-            }
         }
+
+        if (changedLegacyAudioMode) {
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }
+
+        usedCommunicationDeviceRoute = false
+        usedLegacyScoRoute = false
+        changedLegacyAudioMode = false
     }
 
     private fun startForegroundNotification() {
+        val routeDescription = if (isGalaxyS25Family()) {
+            "Galaxy S25 anti-echo HFP routing is active"
+        } else {
+            "Routing one captured audio stream over hands-free Bluetooth"
+        }
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("HFP Music Router")
-            .setContentText("Routing one captured audio stream over hands-free Bluetooth")
+            .setContentText(routeDescription)
             .setOngoing(true)
             .build()
 
