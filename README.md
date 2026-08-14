@@ -12,24 +12,25 @@ The APK is built and published automatically by GitHub Actions after every updat
 
 1. Connect your phone to the car's hands-free Bluetooth connection.
 2. Open HFP Music Router and tap **Start device audio routing**.
-3. Accept Android's screen/audio capture confirmation.
+3. On most phones, accept Android's screen/audio capture confirmation.
 4. Play audio from an eligible local player, browser, YouTube, or another media app.
 5. Tap **Stop routing** when finished.
 
 ## Galaxy S25 compatibility
 
-Version 1.3 adds a stronger single-stream workaround for the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra). Some S25 firmware versions mirror the source app's normal `STREAM_MUSIC` audio into SCO while HFP Music Router is also replaying the captured audio, causing two delayed copies in the car.
+Version 1.4 changes the Galaxy S25 family (S25, S25+, S25 Edge and S25 Ultra) to a direct SCO-only mode.
 
-While HFP routing is active on an S25, the app therefore temporarily mutes only the normal `STREAM_MUSIC` output and keeps its captured replay on `USAGE_VOICE_COMMUNICATION`. When routing stops, the app restores the previous music-stream mute state. Galaxy S22 and other devices continue to use the normal routing path.
+Testing showed that on the S25, opening SCO already causes Samsung's audio policy to send the source app's original media stream to the car. The earlier capture-and-replay path therefore produced a second delayed copy. Version 1.4 does not create MediaProjection, AudioRecord or AudioTrack replay on S25 devices; it only opens the SCO/HFP connection and lets the phone route the original media stream directly.
+
+Galaxy S22 and other devices continue to use the playback-capture and replay path because those devices do not automatically mirror normal media into SCO.
 
 ## Important limitations
 
 - HFP/SCO is designed for calls, so output is mono and phone-call quality.
-- Android playback capture only works for apps that permit their audio to be captured.
-- DRM or protected content may be silent.
-- YouTube and similar apps may work depending on the Android version, phone manufacturer, and the source app's capture policy.
-- Some phones or car Bluetooth modules reject SCO unless they believe a communication session is active.
-- Android 10 or newer is required for device playback capture.
+- On non-S25 devices, Android playback capture only works for apps that permit their audio to be captured.
+- DRM or protected content may be silent on the capture/replay path.
+- Device manufacturers can implement audio routing differently, which is why the S25 uses a separate direct mode.
+- Android 10 or newer is required for playback capture on devices that use the capture/replay path.
 
 ## Releases
 
