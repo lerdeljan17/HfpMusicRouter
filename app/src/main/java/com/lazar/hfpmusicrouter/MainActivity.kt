@@ -50,6 +50,20 @@ class MainActivity : AppCompatActivity() {
         requestNeededPermissions()
 
         binding.routeButton.setOnClickListener {
+            // Galaxy S25 firmware already mirrors ordinary media into SCO when the SCO
+            // connection is opened. Capturing and replaying that media creates the second
+            // delayed copy, so S25 uses a direct SCO-only path with no MediaProjection.
+            if (isGalaxyS25Family()) {
+                ContextCompat.startForegroundService(
+                    this,
+                    Intent(this, HfpRoutingService::class.java).apply {
+                        action = HfpRoutingService.ACTION_START_DIRECT
+                    }
+                )
+                binding.statusText.text = "Galaxy S25 direct HFP mode active. Play audio normally in YouTube or another player."
+                return@setOnClickListener
+            }
+
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                 binding.statusText.text = "Capturing audio from other apps requires Android 10 or newer."
                 return@setOnClickListener
@@ -78,5 +92,14 @@ class MainActivity : AppCompatActivity() {
             permissions += Manifest.permission.POST_NOTIFICATIONS
         }
         if (permissions.isNotEmpty()) permissionLauncher.launch(permissions.toTypedArray())
+    }
+
+    private fun isGalaxyS25Family(): Boolean {
+        if (!Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return false
+        val model = Build.MODEL.uppercase()
+        return model.startsWith("SM-S931") || // Galaxy S25
+            model.startsWith("SM-S936") ||   // Galaxy S25+
+            model.startsWith("SM-S937") ||   // Galaxy S25 Edge
+            model.startsWith("SM-S938")      // Galaxy S25 Ultra
     }
 }
