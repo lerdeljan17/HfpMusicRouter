@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra(HfpRoutingService.EXTRA_RESULT_DATA, result.data)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            binding.statusText.text = "Routing device audio to the Bluetooth hands-free connection. Start audio in YouTube or any eligible player."
+            binding.statusText.text = "Routing captured device audio to the Bluetooth hands-free connection."
         } else {
             binding.statusText.text = "Audio capture permission was cancelled."
         }
@@ -50,6 +50,15 @@ class MainActivity : AppCompatActivity() {
         requestNeededPermissions()
 
         binding.routeButton.setOnClickListener {
+            if (isGalaxyS25Family()) {
+                val serviceIntent = Intent(this, HfpRoutingService::class.java).apply {
+                    action = HfpRoutingService.ACTION_START_DIRECT
+                }
+                ContextCompat.startForegroundService(this, serviceIntent)
+                binding.statusText.text = "Galaxy S25 direct HFP mode active. Play audio normally in YouTube, Spotify or another app."
+                return@setOnClickListener
+            }
+
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                 binding.statusText.text = "Capturing audio from other apps requires Android 10 or newer."
                 return@setOnClickListener
@@ -63,6 +72,15 @@ class MainActivity : AppCompatActivity() {
             })
             binding.statusText.text = "Routing stopped."
         }
+    }
+
+    private fun isGalaxyS25Family(): Boolean {
+        if (!Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return false
+        val model = Build.MODEL.uppercase()
+        return model.startsWith("SM-S931") ||
+            model.startsWith("SM-S936") ||
+            model.startsWith("SM-S937") ||
+            model.startsWith("SM-S938")
     }
 
     private fun requestNeededPermissions() {
