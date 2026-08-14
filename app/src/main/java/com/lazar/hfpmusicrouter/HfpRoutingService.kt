@@ -29,11 +29,10 @@ class HfpRoutingService : Service() {
     private var worker: Thread? = null
     private val running = AtomicBoolean(false)
 
+    private var directS25Active = false
     private var changedLegacyAudioMode = false
     private var usedCommunicationDeviceRoute = false
     private var usedLegacyScoRoute = false
-    private var mutedMusicForS25 = false
-    private var musicWasMutedBeforeS25 = false
 
     override fun onCreate() {
         super.onCreate()
@@ -43,20 +42,36 @@ class HfpRoutingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_START_DIRECT -> startDirectS25Routing()
             ACTION_START_CAPTURE -> startCapture(intent)
             ACTION_STOP -> {
-                stopCapture()
+                stopRouting()
                 stopSelf()
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startCapture(intent: Intent) {
-        if (running.get()) return
-        startForegroundNotification()
+    private fun startDirectS25Routing() {
+        if (running.get() || directS25Active) return
 
-        val hfpDevice = startHfpRouting()
+        startForegroundNotification(directS25 = true)
+        resetRouteFlags()
+
+        // Galaxy S25 firmware already mirrors normal MEDIA playback to the car when the
+        // off-call SCO link is opened. Do not capture or replay anything here; doing so is
+        // exactly what produced the second delayed copy heard in the car.
+        @Suppress("DEPRECATION")
+        audioManager.startBluetoothSco()
+        usedLegacyScoRoute = true
+        directS25Active = true
+    }
+
+    private fun startCapture(intent: Intent) {
+        if (running.get() || directS25Active) return
+        startForegroundNotification(directS25 = false)
+
+        val hfpDevice = startNormalHfpRouting()
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -130,14 +145,6 @@ class HfpRoutingService : Service() {
         audioRecord?.startRecording()
         audioTrack?.play()
 
-        // Galaxy S25 firmware can mirror the source app's normal MEDIA stream into SCO
-        // while also playing our captured VOICE_COMMUNICATION track. Mute only the normal
-        // music stream so the car hears our single replayed HFP stream. Playback capture is
-        // intentionally kept active; we restore the user's previous mute state on stop.
-        if (isGalaxyS25Family()) {
-            muteOriginalMusicForS25()
-        }
-
         worker = thread(name = "HfpPlaybackCapture") {
             val buffer = ByteArray(bufferSize)
             while (running.get()) {
@@ -147,25 +154,13 @@ class HfpRoutingService : Service() {
         }
     }
 
-    private fun startHfpRouting(): AudioDeviceInfo? {
-        usedCommunicationDeviceRoute = false
-        usedLegacyScoRoute = false
-        changedLegacyAudioMode = false
+    private fun startNormalHfpRouting(): AudioDeviceInfo? {
+        resetRouteFlags()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val hfpDevice = audioManager.availableCommunicationDevices.firstOrNull {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
-            } ?: audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
             }
-
-            if (isGalaxyS25Family()) {
-                @Suppress("DEPRECATION")
-                audioManager.startBluetoothSco()
-                usedLegacyScoRoute = true
-                return hfpDevice
-            }
-
             if (hfpDevice != null) {
                 usedCommunicationDeviceRoute = audioManager.setCommunicationDevice(hfpDevice)
             }
@@ -183,42 +178,13 @@ class HfpRoutingService : Service() {
         }
     }
 
-    private fun muteOriginalMusicForS25() {
-        mutedMusicForS25 = false
-        musicWasMutedBeforeS25 = audioManager.isStreamMute(AudioManager.STREAM_MUSIC)
-
-        if (!musicWasMutedBeforeS25 && !audioManager.isVolumeFixed) {
-            audioManager.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                AudioManager.ADJUST_MUTE,
-                0
-            )
-            mutedMusicForS25 = true
-        }
+    private fun resetRouteFlags() {
+        changedLegacyAudioMode = false
+        usedCommunicationDeviceRoute = false
+        usedLegacyScoRoute = false
     }
 
-    private fun restoreOriginalMusicForS25() {
-        if (mutedMusicForS25 && !musicWasMutedBeforeS25 && !audioManager.isVolumeFixed) {
-            audioManager.adjustStreamVolume(
-                AudioManager.STREAM_MUSIC,
-                AudioManager.ADJUST_UNMUTE,
-                0
-            )
-        }
-        mutedMusicForS25 = false
-        musicWasMutedBeforeS25 = false
-    }
-
-    private fun isGalaxyS25Family(): Boolean {
-        if (!Build.MANUFACTURER.equals("samsung", ignoreCase = true)) return false
-        val model = Build.MODEL.uppercase()
-        return model.startsWith("SM-S931") || // Galaxy S25
-            model.startsWith("SM-S936") ||   // Galaxy S25+
-            model.startsWith("SM-S937") ||   // Galaxy S25 Edge
-            model.startsWith("SM-S938")      // Galaxy S25 Ultra
-    }
-
-    private fun stopCapture() {
+    private fun stopRouting() {
         running.set(false)
         try { audioRecord?.stop() } catch (_: Exception) {}
         try { audioTrack?.stop() } catch (_: Exception) {}
@@ -231,50 +197,46 @@ class HfpRoutingService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
 
-        restoreOriginalMusicForS25()
-
         if (usedCommunicationDeviceRoute && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.clearCommunicationDevice()
         }
-
         if (usedLegacyScoRoute) {
             @Suppress("DEPRECATION")
             audioManager.stopBluetoothSco()
         }
-
         if (changedLegacyAudioMode) {
             audioManager.mode = AudioManager.MODE_NORMAL
         }
 
-        usedCommunicationDeviceRoute = false
-        usedLegacyScoRoute = false
-        changedLegacyAudioMode = false
+        directS25Active = false
+        resetRouteFlags()
     }
 
-    private fun startForegroundNotification() {
-        val routeDescription = if (isGalaxyS25Family()) {
-            "Galaxy S25 single-stream HFP routing is active"
-        } else {
-            "Routing one captured audio stream over hands-free Bluetooth"
-        }
-
+    private fun startForegroundNotification(directS25: Boolean) {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentTitle("HFP Music Router")
-            .setContentText(routeDescription)
+            .setContentText(
+                if (directS25) "Galaxy S25 direct HFP mode: no audio copy/replay"
+                else "Capturing one audio stream and routing it over hands-free Bluetooth"
+            )
             .setOngoing(true)
             .build()
 
         val foregroundTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            if (directS25) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
         } else 0
 
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, foregroundTypes)
     }
 
     override fun onDestroy() {
-        stopCapture()
+        stopRouting()
         super.onDestroy()
     }
 
@@ -292,6 +254,7 @@ class HfpRoutingService : Service() {
     }
 
     companion object {
+        const val ACTION_START_DIRECT = "com.lazar.hfpmusicrouter.START_DIRECT"
         const val ACTION_START_CAPTURE = "com.lazar.hfpmusicrouter.START_CAPTURE"
         const val ACTION_STOP = "com.lazar.hfpmusicrouter.STOP"
         const val EXTRA_RESULT_CODE = "result_code"
